@@ -1,0 +1,105 @@
+name: Version Bump & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Bump type (patch/minor/major) 또는 직접 버전 입력 (e.g. 3.0.0)'
+        required: true
+        default: 'patch'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine new version
+        id: version
+        run: |
+                  env:
+          INPUT: ${{ github.event.inputs.bump_type }}
+                  run: |
+
+          # 입력값이 semver 형식이면 직접 사용, 아니면 bump 타입으로 처리
+          if echo "$INPUT" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            NEW_VERSION="$INPUT"
+          else
+            # 최신 태그에서 현재 버전 추출
+            LATEST_TAG=$(git tag --sort=-v:refname | head -1)
+            if [ -z "$LATEST_TAG" ]; then
+              echo "❌ No existing tags found. Please provide an explicit version."
+              exit 1
+            fi
+
+            # v 접두사 제거 (있는 경우)
+            CURRENT="${LATEST_TAG#v}"
+
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+            case "$INPUT" in
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              *)
+                echo "❌ Invalid input: '$INPUT'. Use patch/minor/major or a semver like 3.0.0"
+                exit 1
+                ;;
+            esac
+
+            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "📦 New version: $NEW_VERSION"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          NEW_TAG="${{ steps.version.outputs.version }}"
+          PREVIOUS_TAG=$(git tag --sort=-v:refname | grep -v "^${NEW_TAG}$" | head -1)
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            NOTES=$(git log --pretty=format:"- %s (%h)")
+          else
+            NOTES=$(git log --pretty=format:"- %s (%h)" "${PREVIOUS_TAG}..HEAD")
+          fi
+
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body: |
+            ## Changes
+
+            ${{ steps.notes.outputs.notes }}
+          draft: false
+          prerelease: false
