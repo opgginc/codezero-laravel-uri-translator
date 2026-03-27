@@ -24,7 +24,9 @@ jobs:
       - name: Determine new version
         id: version
         run: |
-          INPUT="${{ github.event.inputs.bump_type }}"
+                  env:
+          INPUT: ${{ github.event.inputs.bump_type }}
+                  run: |
 
           # 입력값이 semver 형식이면 직접 사용, 아니면 bump 타입으로 처리
           if echo "$INPUT" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
